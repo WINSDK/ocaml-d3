@@ -30,110 +30,104 @@
     ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
     POSSIBILITY OF SUCH DAMAGE.
   ----------------------------------------------------------------------------*)
+open Js_of_ocaml
 
-type 'a s = S
-
-type ('a, 'b) t = 'a s -> 'b s
+type ('a, 'b) t = 'a -> 'b
 type ('a, 'b) fn = Dom.node Js.t -> 'a -> int -> 'b
 
-let d3_select arg =
-  Js.Unsafe.(meth_call global##.d3 "select" [| inject arg |])
-;;
+let d3_select arg = Js.Unsafe.(meth_call global##.d3 "select" [| inject arg |])
 
-let name_call (meth:string) (name:string) f =
+let name_call (meth : string) (name : string) f =
   let open Js.Unsafe in
   let name = Js.string name in
   fun cxt -> meth_call cxt meth [| inject name; inject f |]
 ;;
 
-let const_call (meth:string) arg cxt =
+let const_call (meth : string) arg cxt =
   Js.(Unsafe.meth_call cxt meth [| Unsafe.inject arg |])
 ;;
 
-let thunk_call (meth:string) cxt =
-  Js.Unsafe.meth_call cxt meth [| |]
+let thunk_call (meth : string) cxt = Js.Unsafe.meth_call cxt meth [||]
+let mb = Js.wrap_meth_callback
+let select name = const_call "select" (Js.string name)
+let selectAll name = const_call "selectAll" (Js.string name)
+let attr name f = name_call "attr" name (mb (fun this d i () -> Js.string (f this d i)))
+
+let classed name f =
+  name_call "classed" name (mb (fun this d i () -> Js.bool (f this d i)))
 ;;
 
-let mb = Js.wrap_meth_callback
-
-let select    name = const_call "select"    (Js.string name)
-let selectAll name = const_call "selectAll" (Js.string name)
-
-let attr     name f = name_call "attr"     name (mb (fun this d i () -> Js.string (f this d i)))
-let classed  name f = name_call "classed"  name (mb (fun this d i () -> Js.bool   (f this d i)))
-let style    name f = name_call "style"    name (mb (fun this d i () -> Js.string (f this d i)))
+let style name f = name_call "style" name (mb (fun this d i () -> Js.string (f this d i)))
 let property name f = name_call "property" name (mb (fun this d i () -> f this d i))
-
 let text f = const_call "text" (mb (fun this d i () -> Js.string (f this d i)))
 let html f = const_call "html" (mb (fun this d i () -> Js.string (f this d i)))
-
-let append name         = const_call "append" (Js.string name)
-let insert ~before name = name_call  "insert" name (Js.string before)
-let remove : ('a, 'a) t = thunk_call "remove"
-
+let append name = const_call "append" (Js.string name)
+let insert ~before name = name_call "insert" name (Js.string before)
+let remove cxt = thunk_call "remove" cxt
 let datum f = const_call "datum" (fun d i -> f d i)
-let data  f = const_call "data"  (fun d i -> Js.array (Array.of_list (f d i)))
-
-let enter  : ('a, 'a) t = thunk_call "enter"
+let data f = const_call "data" (fun d i -> Js.array (Array.of_list (f d i)))
+let enter cxt = thunk_call "enter" cxt
 let update : ('a, 'a) t = fun x -> x
-let exit   : ('a, 'a) t = thunk_call "exit"
-
+let exit cxt = thunk_call "exit" cxt
 let filter f = const_call "filter" (mb (fun this d i () -> Js.bool (f this d i)))
-let sort   f = const_call "sort"   f
-let each   f = const_call "each"   (mb (fun this d i () -> (f this d i)))
-
+let sort f = const_call "sort" f
+let each f = const_call "each" (mb (fun this d i () -> f this d i))
 let str f name x = f name (fun _ _ _ -> x)
 let int f name x = str f name (string_of_int x)
 let flt f name x = str f name (string_of_float x)
 
 let _seq u v =
   fun cxt ->
-    let _ = u cxt in
-    v cxt
+  let _ = u cxt in
+  v cxt
+;;
 
-let (|.)  u v = fun cxt -> v (u cxt)
-let (<.>) u v = u |. v
-let (|-) u v = u <.> (_seq v update)
+let ( |. ) u v = fun cxt -> v (u cxt)
+let ( <.> ) u v = u |. v
+let ( |- ) u v = u <.> _seq v update
 
 let chain l =
   let rec loop l acc =
     match l with
-    | []         -> acc
-    | hd::[]     -> acc <.> hd
-    | hd::sd::[] -> acc <.> hd <.> sd
-    | hd::tl     -> loop tl (acc <.> hd)
+    | [] -> acc
+    | hd :: [] -> acc <.> hd
+    | [ hd; sd ] -> acc <.> hd <.> sd
+    | hd :: tl -> loop tl (acc <.> hd)
   in
   loop l update
+;;
 
 let seq l =
   let rec loop l acc =
     match l with
-    | []     -> acc
-    | hd::[] -> _seq acc hd
-    | hd::tl -> loop tl (_seq acc hd)
+    | [] -> acc
+    | hd :: [] -> _seq acc hd
+    | hd :: tl -> loop tl (_seq acc hd)
   in
   loop l update
+;;
 
-let nest top lst =
-  top |- seq lst
+let nest top lst = top |- seq lst
 
-let gensym = object
-  val mutable id = 0
+let gensym =
+  object
+    val mutable id = 0
 
-  method next =
-    let x = id in
-    id <- x + 1;
-    x
-end
+    method next =
+      let x = id in
+      id <- x + 1;
+      x
+  end
+;;
 
 let static name =
-  let gensym_  = string_of_int gensym#next in
-  let selector = name ^ "[ocaml-d3-gensym=\"" ^ gensym_ ^ "\"]"in
+  let gensym_ = string_of_int gensym#next in
+  let selector = name ^ "[ocaml-d3-gensym=\"" ^ gensym_ ^ "\"]" in
   let f this _ _ =
     let this = d3_select this in
     let that = select selector this in
-    if thunk_call "size" that = 0 then
-      ignore ((append name <.> str attr "ocaml-d3-gensym" gensym_) this)
+    if thunk_call "size" that = 0
+    then ignore ((append name <.> str attr "ocaml-d3-gensym" gensym_) this)
   in
   _seq (each f) (select selector)
 ;;
@@ -146,46 +140,39 @@ module E = struct
     fun cxt -> name_call "on" name f' cxt
   ;;
 
-  let click       f = _handler "click"      f
-  let dblclick    f = _handler "dblclick"   f
-  let mousedown   f = _handler "mousedown"  f
-  let mouseup     f = _handler "mouseup"    f
-  let mouseover   f = _handler "mouseover"  f
-  let mousemove   f = _handler "mousemove"  f
-  let mouseout    f = _handler "mouseout"   f
-
-  let keypress    f = _handler "keypress"   f
-  let keydown     f = _handler "keydown"    f
-  let keyup       f = _handler "keyup"      f
-
-  let input       f = _handler "input"      f
-  let timeupdate  f = _handler "timeupdate" f
-  let change      f = _handler "change"     f
-
-  let dragstart   f = _handler "dragstart"  f
-  let dragend     f = _handler "dragend"    f
-  let dragenter   f = _handler "dragenter"  f
-  let dragover    f = _handler "dragover"   f
-  let dragleave   f = _handler "dragleave"  f
-  let drag        f = _handler "drag"       f
-  let drop        f = _handler "drop"       f
-
-  let focus       f = _handler "focus"      f
-  let blur        f = _handler "blur"       f
-  let scroll      f = _handler "scroll"     f
-  let submit      f = _handler "submit"     f
-  let select      f = _handler "select"     f
-  let mousewheel  f = _handler "mousewheel" f
-
+  let click f = _handler "click" f
+  let dblclick f = _handler "dblclick" f
+  let mousedown f = _handler "mousedown" f
+  let mouseup f = _handler "mouseup" f
+  let mouseover f = _handler "mouseover" f
+  let mousemove f = _handler "mousemove" f
+  let mouseout f = _handler "mouseout" f
+  let keypress f = _handler "keypress" f
+  let keydown f = _handler "keydown" f
+  let keyup f = _handler "keyup" f
+  let input f = _handler "input" f
+  let timeupdate f = _handler "timeupdate" f
+  let change f = _handler "change" f
+  let dragstart f = _handler "dragstart" f
+  let dragend f = _handler "dragend" f
+  let dragenter f = _handler "dragenter" f
+  let dragover f = _handler "dragover" f
+  let dragleave f = _handler "dragleave" f
+  let drag f = _handler "drag" f
+  let drop f = _handler "drop" f
+  let focus f = _handler "focus" f
+  let blur f = _handler "blur" f
+  let scroll f = _handler "scroll" f
+  let submit f = _handler "submit" f
+  let select f = _handler "select" f
+  let mousewheel f = _handler "mousewheel" f
   let handle name f = _handler name f
 end
 
-let run ?(node=Js.Unsafe.global##.document##.documentElement) t data =
+let run ?(node = Js.Unsafe.global##.document##.documentElement) t data =
   let cxt =
     let open Js.Unsafe in
-    meth_call
-      (d3_select node)
-      "datum" [| inject data |]
+    meth_call (d3_select node) "datum" [| inject data |]
   in
   ignore (t cxt)
 ;;

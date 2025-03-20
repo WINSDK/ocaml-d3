@@ -1,0 +1,4 @@
+(alias
+ (name examples)
+ (deps
+  (alias_rec examples/all)))

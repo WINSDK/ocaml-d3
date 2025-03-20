@@ -32,12 +32,11 @@ repository and running:
 opam upgrade d3
 ```
 
-For building and running the examples during development, you will need to
-reconfigure the build process:
+For building and running the examples during development:
 
 ```bash
-./configure --enable-examples
-make && $BROWSER examples/rectangle.html
+dune build @examples
+$BROWSER examples/rectangle.html
 ```
 
 And you're good to go&mdash;though [styling the TodoMVC app][css] will make it easier on the eyes.
